@@ -1,9 +1,9 @@
 ROOT_DIR= $(shell pwd)
 TARGETS= toolkits/bc toolkits/bfs toolkits/cc toolkits/pagerank toolkits/sssp
-MACROS= 
-# MACROS= -D PRINT_DEBUG_MESSAGES
+#MACROS= 
+MACROS= -D PRINT_DEBUG_MESSAGES
 
-MPICXX= mpicxx
+MPICXX= deps/mpich-install//bin/mpicxx
 CXXFLAGS= -O3 -Wall -std=c++11 -g -fopenmp -march=native -I$(ROOT_DIR) $(MACROS)
 SYSLIBS= -lnuma
 HEADERS= $(shell find . -name '*.hpp')

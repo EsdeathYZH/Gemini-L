@@ -16,6 +16,7 @@ Copyright (c) 2014-2015 Xiaowei Zhu, Tsinghua University
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <iostream>
 
 #include "core/graph.hpp"
 
@@ -45,11 +46,11 @@ void compute(Graph<Empty> * graph, int iterations) {
   delta /= graph->vertices;
 
   for (int i_i=0;i_i<iterations;i_i++) {
-    if (graph->partition_id==0) {
-      printf("delta(%d)=%lf\n", i_i, delta);
-    }
+    // if (graph->partition_id==0) {
+    //   printf("delta(%d)=%lf\n", i_i, delta);
+    // }
     graph->fill_vertex_array(next, (double)0);
-    graph->process_edges<int,double>(
+    graph->process_edges_new<int,double>(
       [&](VertexId src){
         graph->emit(src, curr[src]);
       },
@@ -110,9 +111,9 @@ void compute(Graph<Empty> * graph, int iterations) {
     },
     active
   );
-  if (graph->partition_id==0) {
-    printf("pr_sum=%lf\n", pr_sum);
-  }
+  // if (graph->partition_id==0) {
+  //   printf("pr_sum=%lf\n", pr_sum);
+  // }
 
   graph->gather_vertex_array(curr, 0);
   if (graph->partition_id==0) {
@@ -120,7 +121,7 @@ void compute(Graph<Empty> * graph, int iterations) {
     for (VertexId v_i=0;v_i<graph->vertices;v_i++) {
       if (curr[v_i] > curr[max_v_i]) max_v_i = v_i;
     }
-    printf("pr[%u]=%lf\n", max_v_i, curr[max_v_i]);
+    //printf("pr[%u]=%lf\n", max_v_i, curr[max_v_i]);
   }
 
   graph->dealloc_vertex_array(curr);
@@ -142,9 +143,9 @@ int main(int argc, char ** argv) {
   int iterations = std::atoi(argv[3]);
 
   compute(graph, iterations);
-  for (int run=0;run<5;run++) {
-    compute(graph, iterations);
-  }
+  // for(int run=0;run<5;run++) {
+  //   compute(graph, iterations);
+  // }
 
   delete graph;
   return 0;

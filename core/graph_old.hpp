@@ -124,8 +124,6 @@ public:
 
   Bitmap * pull_vertices_map;
   int pull_threshold;
-  Bitmap * push_vertices_map;
-  int push_threshold;
 
   Bitmap *** local_outgoing_adj_bitmap; //[socket][partitions]
 
@@ -224,8 +222,7 @@ public:
     }
 
     alpha = 8 * (partitions - 1);
-    pull_threshold = 2;
-    push_threshold = partitions*2;
+    pull_threshold = partitions*2;
 
     MPI_Barrier(MPI_COMM_WORLD);
   }
@@ -840,21 +837,13 @@ public:
     MPI_Allreduce(MPI_IN_PLACE, out_degree, vertices, vid_t, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, in_degree, vertices, vid_t, MPI_SUM, MPI_COMM_WORLD);
 
-    // init pull/push hot vertice map
+    // init pull vertice map
     pull_vertices_map = new Bitmap (vertices);
-    push_vertices_map = new Bitmap (vertices);
     pull_vertices_map->clear();
-    push_vertices_map->clear();
     #pragma omp parallel for
     for(VertexId v_i = 0; v_i < vertices; v_i++){
       if(in_degree[v_i] > pull_threshold){
         pull_vertices_map->set_bit(v_i);
-      }
-    }
-    #pragma omp parallel for
-    for(VertexId v_i = 0; v_i < vertices; v_i++){
-      if(out_degree[v_i] > push_threshold){
-        push_vertices_map->set_bit(v_i);
       }
     }
 
@@ -948,6 +937,10 @@ public:
     }
     numa_free(out_degree, sizeof(VertexId) * vertices);
     out_degree = filtered_out_degree;
+    //in_degree = alloc_vertex_array<VertexId>();
+    // for (VertexId v_i=partition_offset[partition_id];v_i<partition_offset[partition_id+1];v_i++) {
+    //   in_degree[v_i] = 0;
+    // }
 
     int * buffered_edges = new int [partitions];
     std::vector<char> * send_buffer = new std::vector<char> [partitions];
@@ -997,6 +990,7 @@ public:
               outgoing_adj_index[dst_part][src] = 0;
             }
             __sync_fetch_and_add(&outgoing_adj_index[dst_part][src], 1);
+            //__sync_fetch_and_add(&in_degree[dst], 1);
           }
           recv_outgoing_edges += recv_edges;
         }
@@ -1355,7 +1349,6 @@ public:
     for (int s_i=0;s_i<sockets;s_i++) {
       for (VertexId p_v_i=0;p_v_i<compressed_incoming_adj_vertices[s_i];p_v_i++) {
         VertexId v_i = compressed_incoming_adj_index[s_i][p_v_i].vertex;
-        if(pull_vertices_map->get_bit(v_i)) continue;
         if(v_i >= partition_offset[current_partition+1]) current_partition++;
         for(int index=compressed_incoming_adj_index[s_i][p_v_i].index;index<compressed_incoming_adj_index[s_i][p_v_i+1].index;index++){
           local_outgoing_adj_bitmap[s_i][current_partition]->set_bit(incoming_adj_list[s_i][index].neighbour);
@@ -1987,19 +1980,36 @@ public:
       local_send_buffer[t_i]->count = 0;
     }
     R reducer = 0;
-
-    for (int i=0;i<partitions;i++) {
-      for (int s_i=0;s_i<sockets;s_i++) {
-        recv_buffer[i][s_i]->resize( sizeof(MsgUnit<M>) * (partition_offset[i+1] - partition_offset[i] + owned_vertices+1) * sockets );
-        send_buffer[i][s_i]->resize( sizeof(MsgUnit<M>) * (partition_offset[i+1] - partition_offset[i] + owned_vertices+1) * sockets );
-        send_buffer[i][s_i]->count = 0;
-        recv_buffer[i][s_i]->count = 0;
+    EdgeId active_edges = process_vertices<EdgeId>(
+      [&](VertexId vtx){
+        return (EdgeId)out_degree[vtx];
+      },
+      active
+    );
+    //bool sparse = (active_edges < edges / 20);
+    bool sparse = false;
+    if (sparse) {
+      for (int i=0;i<partitions;i++) {
+        for (int s_i=0;s_i<sockets;s_i++) {
+          recv_buffer[i][s_i]->resize( sizeof(MsgUnit<M>) * (partition_offset[i+1] - partition_offset[i]) * sockets );
+          send_buffer[i][s_i]->resize( sizeof(MsgUnit<M>) * owned_vertices * sockets );
+          send_buffer[i][s_i]->count = 0;
+          recv_buffer[i][s_i]->count = 0;
+        }
+      }
+    } else {
+      for (int i=0;i<partitions;i++) {
+        for (int s_i=0;s_i<sockets;s_i++) {
+          recv_buffer[i][s_i]->resize( sizeof(MsgUnit<M>) * owned_vertices * sockets );
+          send_buffer[i][s_i]->resize( sizeof(MsgUnit<M>) * (partition_offset[i+1] - partition_offset[i]) * sockets );
+          send_buffer[i][s_i]->count = 0;
+          recv_buffer[i][s_i]->count = 0;
+        }
       }
     }
-    
     size_t basic_chunk = 64;
     // graphlab-style
-    {
+    if (sparse) {
       #ifdef PRINT_DEBUG_MESSAGES
       if (partition_id==0) {
         printf("sparse mode\n");
@@ -2068,12 +2078,12 @@ public:
         master_print("Sparse compute%d end time:%f\n", step, get_time());
       }
 
-      // // dilimiter
-      // for(int s_i = 0; s_i < sockets; s_i++){
-      //   int pos = __sync_fetch_and_add(&send_buffer[current_send_part_id][s_i]->count, 1);
-      //   MsgUnit<M>* ptr = send_buffer[current_send_part_id][s_i]->data + sizeof(MsgUnit<M>) * pos;
-      //   ptr->vertex = (1<<31);
-      // }
+      // dilimiter
+      for(int s_i = 0; s_i < sockets; s_i++){
+        int pos = __sync_fetch_and_add(&send_buffer[current_send_part_id][s_i]->count, 1);
+        MsgUnit<M>* ptr = send_buffer[current_send_part_id][s_i]->data + sizeof(MsgUnit<M>) * pos;
+        ptr->vertex = (1<<31);
+      }
       
       recv_queue[recv_queue_size] = partition_id;
       recv_queue_mutex.lock();
@@ -2183,16 +2193,8 @@ public:
       recv_thread.join();
       delete [] recv_queue;
     }
-
-    for (int i=0;i<partitions;i++) {
-      for (int s_i=0;s_i<sockets;s_i++) {
-        send_buffer[i][s_i]->count = 0;
-        recv_buffer[i][s_i]->count = 0;
-      }
-    }
-
     // pregel-style 
-    {
+    else {
       // dense selective bitmap
       if (dense_selective!=nullptr && partitions>1) {
         double sync_time = 0;
@@ -2303,7 +2305,6 @@ public:
             }
             for (VertexId p_v_i = begin_p_v_i; p_v_i < end_p_v_i; p_v_i ++) {
               VertexId v_i = compressed_incoming_adj_index[s_i][p_v_i].vertex;
-              if(!pull_vertices_map->get_bit(v_i)) continue;
               //why not use bitmap for those vertices which have no incoming neighbor in this partition?
               dense_signal(v_i, VertexAdjList<EdgeData>(incoming_adj_list[s_i] + compressed_incoming_adj_index[s_i][p_v_i].index, incoming_adj_list[s_i] + compressed_incoming_adj_index[s_i][p_v_i+1].index));
             }
@@ -2321,7 +2322,6 @@ public:
               }
               for (VertexId p_v_i = begin_p_v_i; p_v_i < end_p_v_i; p_v_i ++) {
                 VertexId v_i = compressed_incoming_adj_index[s_i][p_v_i].vertex;
-                if(!pull_vertices_map->get_bit(v_i)) continue;
                 dense_signal(v_i, VertexAdjList<EdgeData>(incoming_adj_list[s_i] + compressed_incoming_adj_index[s_i][p_v_i].index, incoming_adj_list[s_i] + compressed_incoming_adj_index[s_i][p_v_i+1].index));
               }
             }
