@@ -18,7 +18,7 @@ Copyright (c) 2014-2015 Xiaowei Zhu, Tsinghua University
 #include <stdlib.h>
 #include <iostream>
 
-#include "core/graph.hpp"
+#include "core/graph_pull.hpp"
 
 #include <math.h>
 
